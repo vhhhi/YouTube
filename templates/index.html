@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>YouTube 视频下载器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .hover-effect:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto px-4 py-8">
+        <!-- 标题部分 -->
+        <div class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">YouTube 视频下载器</h1>
+            <p class="text-gray-600">输入YouTube视频链接即可轻松下载</p>
+        </div>
+
+        <!-- 下载表单 -->
+        <div class="max-w-xl mx-auto bg-white rounded-lg shadow-md p-6 mb-8">
+            <div class="flex space-x-4">
+                <input type="text" id="videoUrl" 
+                       class="flex-1 px-4 py-2 border rounded-lg focus:outline-none focus:border-blue-500"
+                       placeholder="请输入YouTube视频链接">
+                <button onclick="startDownload()" 
+                        class="px-6 py-2 bg-blue-500 text-white rounded-lg hover-effect transition duration-200">
+                    下载
+                </button>
+            </div>
+            <div id="progress" class="mt-4 hidden">
+                <!-- 进度条 -->
+                <div class="w-full bg-gray-200 rounded-full h-2.5 mb-2">
+                    <div id="progressBar" class="bg-blue-600 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+                <!-- 下载信息 -->
+                <div class="flex justify-between text-sm text-gray-600">
+                    <span id="progressText">准备下载...</span>
+                    <span id="speedText"></span>
+                </div>
+                <!-- 预计剩余时间 -->
+                <div class="text-sm text-gray-500 mt-1">
+                    <span id="etaText"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 已下载视频列表 -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {% for video in videos %}
+            <div class="bg-white rounded-lg shadow-md p-4">
+                <video class="w-full rounded-lg mb-4" controls>
+                    <source src="/downloads/{{ video.filepath | replace('downloads/', '') }}" type="video/mp4">
+                </video>
+                <h3 class="text-lg font-semibold mb-2">{{ video.title }}</h3>
+                <div class="text-sm text-gray-600">
+                    <p>时长: {{ video.duration }}秒</p>
+                    <p>作者: {{ video.uploader }}</p>
+                    <p>大小: {{ "%.2f"|format(video.filesize / 1024 / 1024) }} MB</p>
+                    <p class="mt-2">存储路径: {{ video.filepath }}</p>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <script>
+        let ws;
+        
+        function startDownload() {
+            const url = document.getElementById('videoUrl').value;
+            if (!url) return;
+
+            // 显示进度条并重置状态
+            const progress = document.getElementById('progress');
+            progress.classList.remove('hidden');
+            document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('progressText').textContent = '准备下载...';
+            document.getElementById('speedText').textContent = '';
+            document.getElementById('etaText').textContent = '';
+            
+            // 建立WebSocket连接
+            ws = new WebSocket(`ws://${window.location.host}/ws/download`);
+            
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                
+                if (data.status === 'downloading') {
+                    const progress = (data.downloaded_bytes / data.total_bytes) * 100;
+                    // 更新进度条
+                    document.getElementById('progressBar').style.width = `${progress}%`;
+                    // 更新下载信息
+                    document.getElementById('progressText').textContent = 
+                        `已下载: ${formatSize(data.downloaded_bytes)} / ${formatSize(data.total_bytes)} (${Math.round(progress)}%)`;
+                    document.getElementById('speedText').textContent = 
+                        `速度: ${formatSpeed(data.speed)}`;
+                    document.getElementById('etaText').textContent = 
+                        `预计剩余时间: ${formatTime(data.eta)}`;
+                }
+                else if (data.status === 'complete') {
+                    document.getElementById('progressText').textContent = '下载完成！';
+                    document.getElementById('speedText').textContent = '';
+                    document.getElementById('etaText').textContent = '';
+                    setTimeout(() => window.location.reload(), 1000);
+                }
+                else if (data.status === 'error') {
+                    document.getElementById('progressText').textContent = `错误: ${data.message}`;
+                    document.getElementById('speedText').textContent = '';
+                    document.getElementById('etaText').textContent = '';
+                }
+            };
+            
+            ws.onopen = function() {
+                ws.send(url);
+            };
+        }
+
+        // 格式化文件大小
+        function formatSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
+        }
+
+        // 格式化下载速度
+        function formatSpeed(speed) {
+            if (speed > 1024 * 1024) {
+                return `${(speed / 1024 / 1024).toFixed(2)} MB/s`;
+            }
+            return `${(speed / 1024).toFixed(2)} KB/s`;
+        }
+
+        // 格式化时间
+        function formatTime(seconds) {
+            if (!seconds) return '计算中...';
+            if (seconds < 60) return `${seconds}秒`;
+            const minutes = Math.floor(seconds / 60);
+            seconds = seconds % 60;
+            if (minutes < 60) return `${minutes}分${seconds}秒`;
+            const hours = Math.floor(minutes / 60);
+            return `${hours}小时${minutes % 60}分`;
+        }
+    </script>
+</body>
+</html> 
