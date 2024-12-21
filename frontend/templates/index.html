@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>YouTube 视频下载器</title>
+    <style>
+        body {
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 0 20px;
+            font-family: Arial, sans-serif;
+        }
+        .input-group {
+            margin: 20px 0;
+            display: flex;
+            gap: 10px;
+        }
+        input {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            padding: 8px 16px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .format-select {
+            margin: 20px 0;
+            display: none;
+        }
+        select {
+            width: 100%;
+            padding: 8px;
+            margin: 10px 0;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .format-info {
+            margin: 10px 0;
+            color: #666;
+        }
+        #progress {
+            margin: 20px 0;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <h1>YouTube 视频下载器</h1>
+    <p>输入YouTube视频链接即可轻松下载</p>
+    
+    <div class="input-group">
+        <input type="text" id="videoUrl" placeholder="https://youtube.com/...">
+        <button id="checkUrl">获取格式</button>
+    </div>
+
+    <div class="format-select" id="formatSelect">
+        <h3>选择下载格式：</h3>
+        <select id="formats">
+            <option value="">请选择格式...</option>
+        </select>
+        <div class="format-info" id="formatInfo"></div>
+        <button id="download" disabled>开始下载</button>
+    </div>
+
+    <div id="progress" style="display: none;">
+        <div>下载状态：</div>
+        <div class="progress-bar" style="width: 100%; height: 20px; background-color: #f0f0f0; border-radius: 4px; margin: 10px 0;">
+            <div id="progressBar" style="width: 0%; height: 100%; background-color: #4CAF50; border-radius: 4px; transition: width 0.3s ease;"></div>
+        </div>
+        <div id="progressInfo">准备下载...</div>
+        <div id="speedInfo" style="margin-top: 5px;"></div>
+    </div>
+
+    <script type="module">
+        import VideoAPI from '/static/js/api.js';
+        import { formatBytes, formatSpeed, formatETA } from '/static/js/utils.js';
+
+        let currentFormats = [];
+
+        // 获取分辨率数字
+        function getResolutionNumber(resolution) {
+            if (!resolution) return 0;
+            const match = resolution.match(/\d+/);
+            return match ? parseInt(match[0]) : 0;
+        }
+
+        // 过滤和排序格式
+        function processFormats(formats) {
+            // 按分辨率和类型排序
+            return formats.sort((a, b) => {
+                // 首先按类型分组：视频+音频 > 仅视频 > 仅音频
+                const typeOrder = {
+                    '仅音频': 2,
+                    '仅视频': 1,
+                    '': 0  // 视频+音频
+                };
+                const typeCompare = typeOrder[a.format_note] - typeOrder[b.format_note];
+                if (typeCompare !== 0) return typeCompare;
+
+                // 然后按分辨率降序排序
+                const resA = getResolutionNumber(a.resolution);
+                const resB = getResolutionNumber(b.resolution);
+                if (resA !== resB) return resB - resA;
+
+                // 最后按文件大小升序排序
+                return (a.filesize || 0) - (b.filesize || 0);
+            });
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            const urlInput = document.getElementById('videoUrl');
+            const checkButton = document.getElementById('checkUrl');
+            const downloadButton = document.getElementById('download');
+            const formatSelect = document.getElementById('formatSelect');
+            const formatsDropdown = document.getElementById('formats');
+            const formatInfo = document.getElementById('formatInfo');
+            const progress = document.getElementById('progress');
+            const progressInfo = document.getElementById('progressInfo');
+
+            // 格式选择事件
+            formatsDropdown.addEventListener('change', () => {
+                const selectedFormat = currentFormats.find(f => f.format_id === formatsDropdown.value);
+                downloadButton.disabled = !formatsDropdown.value;
+                
+                if (selectedFormat) {
+                    let info = '';
+                    if (selectedFormat.resolution && selectedFormat.resolution !== 'unknown') {
+                        info += `分辨率: ${selectedFormat.resolution}`;
+                    }
+                    if (selectedFormat.fps) {
+                        info += `, ${selectedFormat.fps}fps`;
+                    }
+                    if (selectedFormat.vcodec !== 'none') {
+                        info += `, 视频编码: ${selectedFormat.vcodec}`;
+                    }
+                    if (selectedFormat.acodec !== 'none') {
+                        info += `, 音频编码: ${selectedFormat.acodec}`;
+                    }
+                    if (selectedFormat.tbr) {
+                        info += `, 比特率: ${selectedFormat.tbr}kbps`;
+                    }
+                    info += `, 格式: ${selectedFormat.ext}`;
+                    if (selectedFormat.filesize) {
+                        info += `, 大小: ${formatBytes(selectedFormat.filesize)}`;
+                    }
+                    if (selectedFormat.format_note) {
+                        info += ` [${selectedFormat.format_note}]`;
+                    }
+                    formatInfo.textContent = info;
+                } else {
+                    formatInfo.textContent = '';
+                }
+            });
+
+            // 获取格式按钮点击事件
+            checkButton.addEventListener('click', async () => {
+                const url = urlInput.value.trim();
+                if (!url) {
+                    alert('请输入视频URL');
+                    return;
+                }
+
+                try {
+                    checkButton.disabled = true;
+                    checkButton.textContent = '获取中...';
+                    
+                    // 获取并处理格式
+                    const formats = await VideoAPI.getVideoFormats(url);
+                    currentFormats = processFormats(formats);
+                    
+                    // 清空并填充格式下拉框
+                    formatsDropdown.innerHTML = '<option value="">请选择格式...</option>';
+                    currentFormats.forEach(format => {
+                        const option = document.createElement('option');
+                        option.value = format.format_id;
+                        
+                        // 构建格式描述
+                        let formatDesc = '';
+                        
+                        // 添加分辨率信息
+                        if (format.resolution && format.resolution !== 'unknown') {
+                            formatDesc += `${format.resolution}`;
+                        }
+                        
+                        // 添加编码格式
+                        if (format.vcodec !== 'none') {
+                            formatDesc += ` [${format.vcodec}`;
+                            if (format.acodec !== 'none') {
+                                formatDesc += `+${format.acodec}]`;
+                            } else {
+                                formatDesc += ']';
+                            }
+                        } else if (format.acodec !== 'none') {
+                            formatDesc += ` [${format.acodec}]`;
+                        }
+                        
+                        // 添加文件格式和大小
+                        formatDesc += ` - ${format.ext}`;
+                        if (format.filesize) {
+                            formatDesc += ` (${formatBytes(format.filesize)})`;
+                        }
+                        
+                        // 添加类型标记
+                        if (format.format_note) {
+                            formatDesc += ` [${format.format_note}]`;
+                        }
+                        
+                        option.textContent = formatDesc;
+                        formatsDropdown.appendChild(option);
+                    });
+
+                    // 显示格式选择区域
+                    formatSelect.style.display = 'block';
+                    
+                } catch (error) {
+                    alert(error.message);
+                } finally {
+                    checkButton.disabled = false;
+                    checkButton.textContent = '获取格式';
+                }
+            });
+
+            // 下载按钮点击事件
+            downloadButton.addEventListener('click', async () => {
+                const url = urlInput.value.trim();
+                const formatId = formatsDropdown.value;
+                
+                if (!url || !formatId) {
+                    alert('请选择下载格式');
+                    return;
+                }
+
+                try {
+                    progress.style.display = 'block';
+                    downloadButton.disabled = true;
+                    progressInfo.textContent = '准备下载...';
+                    document.getElementById('speedInfo').textContent = '';
+                    document.getElementById('progressBar').style.width = '0%';
+                    
+                    const ws = await VideoAPI.startDownload(url, formatId);
+                    
+                    ws.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        console.log('收到WebSocket消息:', data); // 添加调试日志
+                        
+                        if (data.status === 'downloading') {
+                            const percent = (data.downloaded_bytes / data.total_bytes * 100).toFixed(1);
+                            const speed = formatSpeed(data.speed);
+                            const eta = formatETA(data.eta);
+                            
+                            document.getElementById('progressBar').style.width = `${percent}%`;
+                            progressInfo.textContent = `已下载: ${formatBytes(data.downloaded_bytes)} / ${formatBytes(data.total_bytes)} (${percent}%)`;
+                            document.getElementById('speedInfo').textContent = `速度: ${speed} | 剩余时间: ${eta}`;
+                        } else if (data.status === 'processing') {
+                            progressInfo.textContent = '处理中...';
+                            document.getElementById('speedInfo').textContent = '';
+                        } else if (data.status === 'complete') {
+                            document.getElementById('progressBar').style.width = '100%';
+                            progressInfo.textContent = '下载完成！';
+                            document.getElementById('speedInfo').textContent = '';
+                            downloadButton.disabled = false;
+                            ws.close();
+                        } else if (data.status === 'error') {
+                            progressInfo.textContent = `错误: ${data.message}`;
+                            document.getElementById('speedInfo').textContent = '';
+                            downloadButton.disabled = false;
+                            ws.close();
+                        }
+                    };
+
+                    ws.onerror = (error) => {
+                        console.error('WebSocket错误:', error);
+                        progressInfo.textContent = '下载出错，请重试';
+                        document.getElementById('speedInfo').textContent = '';
+                        downloadButton.disabled = false;
+                    };
+
+                    ws.onclose = () => {
+                        console.log('WebSocket连接已关闭');
+                    };
+                } catch (error) {
+                    alert(error.message);
+                    progress.style.display = 'none';
+                    downloadButton.disabled = false;
+                }
+            });
+        });
+    </script>
+</body>
+</html> 
